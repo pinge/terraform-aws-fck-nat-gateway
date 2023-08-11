@@ -123,6 +123,8 @@ resource "aws_launch_template" "this" {
     delete_on_termination       = true
   }
 
+  # Load an environment variable with the ENI id so the fck-nat service can
+  # disable source destination checking and attach the ENI to the EC2 instance.
   user_data = base64encode(templatefile(local.user_data_template, { eni_id: aws_network_interface.this.id }))
 
   tag_specifications {
