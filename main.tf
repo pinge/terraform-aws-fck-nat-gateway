@@ -39,6 +39,7 @@ locals {
 resource "aws_security_group" "this" {
   name_prefix = var.name
   vpc_id      = var.vpc_id
+  tags        = local.tags
 }
 
 resource "aws_security_group_rule" "this_egress" {
@@ -63,6 +64,7 @@ resource "aws_iam_policy" "this" {
   count       = var.ha.enabled ? 1 : 0
   name        = "${var.name}-policy"
   policy      = data.aws_iam_policy_document.this[count.index].json
+  tags        = local.tags
 }
 
 resource "aws_iam_role" "this" {
@@ -80,6 +82,7 @@ resource "aws_iam_role" "this" {
       }
     }
   })
+  tags               = local.tags
 }
 
 resource "aws_iam_role_policy_attachment" "this" {
@@ -92,6 +95,7 @@ resource "aws_iam_instance_profile" "this" {
   count = var.ha.enabled ? 1 : 0
   name  = "${var.name}-profile"
   role  = aws_iam_role.this[count.index].name
+  tags  = local.tags
 }
 
 # This network interface is used as the public static IP addres of the NAT Gateway.
@@ -105,14 +109,19 @@ resource "aws_network_interface" "this" {
   security_groups   = [aws_security_group.this.id]
   # Disable source destination checking for the ENI so it can work as a NAT Gateway
   source_dest_check = false
+  tags              = local.tags
 }
 
 resource "aws_launch_template" "this" {
-  name_prefix   = "${var.name}-${var.ha.enabled ? "asg" : "i"}-"
-  image_id      = data.aws_ami.this.id
-  key_name      = var.key_name
-  instance_type = var.instance_type
+  name_prefix            = "${var.name}-${var.ha.enabled ? "asg" : "i"}-"
+  image_id               = data.aws_ami.this.id
+  key_name               = var.key_name
+  instance_type          = var.instance_type
   update_default_version = true
+  # In HA mode, load an environment variable with the ENI id so the fck-nat service can disable
+  # source destination checking and attach the ENI to the EC2 instance. Include only in HA mode.
+  user_data              = var.ha.enabled ? base64encode(templatefile(local.user_data_template, { eni_id: aws_network_interface.this[0].id })) : null
+  tags                   = local.tags
 
   metadata_options {
     http_endpoint = "enabled"
@@ -132,23 +141,14 @@ resource "aws_launch_template" "this" {
     delete_on_termination       = true
   }
 
-  # In HA mode, load an environment variable with the ENI id so the fck-nat service can disable
-  # source destination checking and attach the ENI to the EC2 instance. Include only in HA mode.
-  user_data = var.ha.enabled ? base64encode(templatefile(local.user_data_template, { eni_id: aws_network_interface.this[0].id })) : null
-
   tag_specifications {
     resource_type = "instance"
-    tags          = {
-      Name = var.name
-    }
+    tags          = local.tags
   }
 
   monitoring {
     enabled = true
   }
-
-  tags = local.tags
-
 }
 
 # ha mode
@@ -181,10 +181,9 @@ resource "aws_instance" "this" {
   # Disable source destination checking for the ENI so it can work as a NAT Gateway
   source_dest_check = false
   key_name          = var.key_name
+  tags              = local.tags
 
   launch_template {
     id = aws_launch_template.this.id
   }
-
-  tags = merge(local.tags, {})
 }
