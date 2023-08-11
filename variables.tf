@@ -3,6 +3,15 @@ variable "name" {
   default = "fck-nat-gateway"
 }
 
+variable "ha" {
+  type = object({
+    enabled = bool
+  })
+  default = {
+    enabled = true
+  }
+}
+
 variable "instance_type" {
   type    = string
   default = "t4g.nano"
@@ -41,10 +50,5 @@ variable "tags" {
 }
 
 locals {
-  common_tags = merge(
-    {
-      Name = "${var.name}-instance"
-    },
-    var.tags
-  )
+  tags = merge({ Name = var.name }, var.tags)
 }

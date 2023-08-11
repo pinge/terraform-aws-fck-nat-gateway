@@ -19,6 +19,7 @@ data "aws_ami" "this" {
 # by assuming a IAM role with permissions to modify the instance's network configuration.
 # see https://github.com/terraform-aws-modules/terraform-aws-eks/issues/1008#issuecomment-691182478
 data "aws_iam_policy_document" "this" {
+  count = var.ha.enabled ? 1 : 0
   statement {
     effect = "Allow"
     actions = [
@@ -59,12 +60,14 @@ resource "aws_security_group_rule" "this_ingress" {
 }
 
 resource "aws_iam_policy" "this" {
+  count       = var.ha.enabled ? 1 : 0
   name        = "${var.name}-policy"
-  policy      = data.aws_iam_policy_document.this.json
+  policy      = data.aws_iam_policy_document.this[count.index].json
 }
 
 resource "aws_iam_role" "this" {
-  name = "${var.name}-role"
+  count              = var.ha.enabled ? 1 : 0
+  name               = "${var.name}-role"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = {
@@ -80,13 +83,15 @@ resource "aws_iam_role" "this" {
 }
 
 resource "aws_iam_role_policy_attachment" "this" {
-  role       = aws_iam_role.this.name
-  policy_arn = aws_iam_policy.this.arn
+  count      = var.ha.enabled ? 1 : 0
+  role       = aws_iam_role.this[count.index].name
+  policy_arn = aws_iam_policy.this[count.index].arn
 }
 
 resource "aws_iam_instance_profile" "this" {
-  name = "${var.name}-profile"
-  role = aws_iam_role.this.name
+  count = var.ha.enabled ? 1 : 0
+  name  = "${var.name}-profile"
+  role  = aws_iam_role.this[count.index].name
 }
 
 # This network interface is used as the public static IP addres of the NAT Gateway.
@@ -95,14 +100,15 @@ resource "aws_iam_instance_profile" "this" {
 # with the network_interface_id every time the instances are rotated in the ASG.
 # see https://stackoverflow.com/a/38155727
 resource "aws_network_interface" "this" {
-  subnet_id       = var.subnet_id
-  security_groups = [aws_security_group.this.id]
+  count             = var.ha.enabled ? 1 : 0
+  subnet_id         = var.subnet_id
+  security_groups   = [aws_security_group.this.id]
   # Disable source destination checking for the ENI so it can work as a NAT Gateway
   source_dest_check = false
 }
 
 resource "aws_launch_template" "this" {
-  name_prefix   = var.name
+  name_prefix   = "${var.name}-${var.ha.enabled ? "asg" : "i"}-"
   image_id      = data.aws_ami.this.id
   key_name      = var.key_name
   instance_type = var.instance_type
@@ -113,8 +119,11 @@ resource "aws_launch_template" "this" {
     http_tokens   = "required"
   }
 
-  iam_instance_profile {
-    name = "${var.name}-profile"
+  dynamic "iam_instance_profile" {
+    for_each = var.ha.enabled ? [""] : []
+    content {
+      name = "${var.name}-profile"
+    }
   }
 
   network_interfaces {
@@ -123,9 +132,9 @@ resource "aws_launch_template" "this" {
     delete_on_termination       = true
   }
 
-  # Load an environment variable with the ENI id so the fck-nat service can
-  # disable source destination checking and attach the ENI to the EC2 instance.
-  user_data = base64encode(templatefile(local.user_data_template, { eni_id: aws_network_interface.this.id }))
+  # In HA mode, load an environment variable with the ENI id so the fck-nat service can disable
+  # source destination checking and attach the ENI to the EC2 instance. Include only in HA mode.
+  user_data = var.ha.enabled ? base64encode(templatefile(local.user_data_template, { eni_id: aws_network_interface.this[0].id })) : null
 
   tag_specifications {
     resource_type = "instance"
@@ -138,11 +147,13 @@ resource "aws_launch_template" "this" {
     enabled = true
   }
 
-  tags = local.common_tags
+  tags = local.tags
 
 }
 
+# ha mode
 resource "aws_autoscaling_group" "this" {
+  count                     = var.ha.enabled ? 1 : 0
   name                      = "${var.name}-asg"
   min_size                  = 1
   max_size                  = 1
@@ -161,4 +172,19 @@ resource "aws_autoscaling_group" "this" {
     create_before_destroy = true
     ignore_changes        = []
   }
+}
+
+# instance mode
+resource "aws_instance" "this" {
+  count             = var.ha.enabled ? 0 : 1
+  subnet_id         = var.subnet_id
+  # Disable source destination checking for the ENI so it can work as a NAT Gateway
+  source_dest_check = false
+  key_name          = var.key_name
+
+  launch_template {
+    id = aws_launch_template.this.id
+  }
+
+  tags = merge(local.tags, {})
 }
