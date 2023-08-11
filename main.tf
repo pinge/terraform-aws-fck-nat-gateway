@@ -15,6 +15,26 @@ data "aws_ami" "this" {
   }
 }
 
+# AWS ASGs do not support configuring source/destination check and it defaults to true, so we need to modify the network interface on boot
+# by assuming a IAM role with permissions to modify the instance's network configuration.
+# see https://github.com/terraform-aws-modules/terraform-aws-eks/issues/1008#issuecomment-691182478
+data "aws_iam_policy_document" "this" {
+  statement {
+    effect = "Allow"
+    actions = [
+      "ec2:AttachNetworkInterface",
+      "ec2:ModifyNetworkInterfaceAttribute",
+    ]
+    # TODO improve access control to resources by the instance
+    #      https://docs.aws.amazon.com/IAM/latest/UserGuide/access_iam-tags.html
+    resources = ["*"]
+  }
+}
+
+locals {
+  user_data_template = "${path.module}/user_data.sh"
+}
+
 resource "aws_security_group" "this" {
   name_prefix = var.name
   vpc_id      = var.vpc_id
@@ -38,15 +58,63 @@ resource "aws_security_group_rule" "this_ingress" {
   protocol          = "all"
 }
 
+resource "aws_iam_policy" "this" {
+  name        = "${var.name}-policy"
+  policy      = data.aws_iam_policy_document.this.json
+}
+
+resource "aws_iam_role" "this" {
+  name = "${var.name}-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = {
+      Effect = "Allow"
+      Action = "sts:AssumeRole"
+      Principal = {
+        Service = [
+          "ec2.amazonaws.com",
+        ]
+      }
+    }
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "this" {
+  role       = aws_iam_role.this.name
+  policy_arn = aws_iam_policy.this.arn
+}
+
+resource "aws_iam_instance_profile" "this" {
+  name = "${var.name}-profile"
+  role = aws_iam_role.this.name
+}
+
+# This network interface is used as the public static IP addres of the NAT Gateway.
+# Every Amazon EC2 instance has a primary ENI on eth0. This primary ENI cannot be detached from the instance.
+# The NAT Gateway needs to keep a static public IP address so we don't have to update the aws_route resource
+# with the network_interface_id every time the instances are rotated in the ASG.
+# see https://stackoverflow.com/a/38155727
+resource "aws_network_interface" "this" {
+  subnet_id       = var.subnet_id
+  security_groups = [aws_security_group.this.id]
+  # Disable source destination checking for the ENI so it can work as a NAT Gateway
+  source_dest_check = false
+}
+
 resource "aws_launch_template" "this" {
   name_prefix   = var.name
   image_id      = data.aws_ami.this.id
   key_name      = var.key_name
   instance_type = var.instance_type
+  update_default_version = true
 
   metadata_options {
     http_endpoint = "enabled"
     http_tokens   = "required"
+  }
+
+  iam_instance_profile {
+    name = "${var.name}-profile"
   }
 
   network_interfaces {
@@ -54,6 +122,8 @@ resource "aws_launch_template" "this" {
     security_groups             = [aws_security_group.this.id]
     delete_on_termination       = true
   }
+
+  user_data = base64encode(templatefile(local.user_data_template, { eni_id: aws_network_interface.this.id }))
 
   tag_specifications {
     resource_type = "instance"
@@ -67,13 +137,26 @@ resource "aws_launch_template" "this" {
   }
 
   tags = local.common_tags
+
 }
 
-resource "aws_instance" "this" {
-  subnet_id         = var.subnet_id
-  source_dest_check = false
+resource "aws_autoscaling_group" "this" {
+  name                      = "${var.name}-asg"
+  min_size                  = 1
+  max_size                  = 1
+  desired_capacity          = 1
+  health_check_grace_period = 30
+  default_cooldown          = 15
+  health_check_type         = "EC2"
+  vpc_zone_identifier       = [var.subnet_id]
 
   launch_template {
     id = aws_launch_template.this.id
+    version = "$Latest"
+  }
+
+  lifecycle {
+    create_before_destroy = true
+    ignore_changes        = []
   }
 }
