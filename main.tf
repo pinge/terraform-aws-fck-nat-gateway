@@ -168,7 +168,8 @@ resource "aws_autoscaling_group" "this" {
   min_size                  = 1
   max_size                  = 1
   desired_capacity          = 1
-  health_check_grace_period = 30
+  # set the health check grace period to 0 when using a lifecycle hook for instance launch
+  health_check_grace_period = var.ha.enabled ? 0 : 60
   default_cooldown          = 15
   health_check_type         = "EC2"
   vpc_zone_identifier       = [var.subnet_id]
