@@ -14,27 +14,12 @@ function get_token {
     echo $(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
 }
 
-function get_target_state {
-    echo $(curl -s -H "X-aws-ec2-metadata-token: $1" http://169.254.169.254/latest/meta-data/autoscaling/target-lifecycle-state)
-}
-
 function get_instance_id {
     echo $(curl -s -H "X-aws-ec2-metadata-token: $1" http://169.254.169.254/latest/meta-data/instance-id)
 }
 
 function get_region {
     echo $(curl -s -H "X-aws-ec2-metadata-token: $1" http://169.254.169.254/latest/meta-data/placement/region)
-}
-
-function get_ami_launch_index {
-    echo $(curl -s -H "X-aws-ec2-metadata-token: $1" http://169.254.169.254/latest/meta-data/ami-launch-index)
-}
-
-function get_network_attachment_id {
-    echo $(aws ec2 describe-network-interface-attribute --region $1 --network-interface-id $2 --attribute attachment \
-        | grep -E -i -o 'AttachmentId": "(eni-attach-[a-z0-9]+)"' \
-        | cut -f 2 -d ' ' \
-        | tr -d '"')
 }
 
 function get_asg_lifecycle_state {
@@ -53,6 +38,13 @@ function complete_lifecycle_action {
         --lifecycle-hook-name $3 \
         --instance-id $4 \
         --lifecycle-action-result $5
+}
+
+function get_network_attachment_id {
+    echo $(aws ec2 describe-network-interface-attribute --region $1 --network-interface-id $2 --attribute attachment \
+        | grep -E -i -o 'AttachmentId": "(eni-attach-[a-z0-9]+)"' \
+        | cut -f 2 -d ' ' \
+        | tr -d '"')
 }
 
 function detach_network_interface {
