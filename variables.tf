@@ -6,9 +6,11 @@ variable "name" {
 variable "ha" {
   type = object({
     enabled = bool
+    warm_pool = number
   })
   default = {
     enabled = true
+    warm_pool = 0
   }
 }
 

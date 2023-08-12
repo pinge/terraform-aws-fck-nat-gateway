@@ -23,8 +23,14 @@ data "aws_iam_policy_document" "this" {
   statement {
     effect = "Allow"
     actions = [
-      "ec2:AttachNetworkInterface",
       "ec2:ModifyNetworkInterfaceAttribute",
+      "ec2:AttachNetworkInterface",
+      "ec2:DescribeNetworkInterfaces",
+      "ec2:DescribeNetworkInterfaceAttribute",
+      "ec2:DetachNetworkInterface",
+      "autoscaling:DescribeLifecycleHookTypes",
+      "autoscaling:CompleteLifecycleAction",
+      "autoscaling:DescribeAutoScalingInstances",
     ]
     # TODO improve access control to resources by the instance
     #      https://docs.aws.amazon.com/IAM/latest/UserGuide/access_iam-tags.html
@@ -34,6 +40,8 @@ data "aws_iam_policy_document" "this" {
 
 locals {
   user_data_template = "${path.module}/user_data.sh"
+  asg_name = "${var.name}-asg"
+  asg_hook_name = "${var.name}-asg-launch-hook"
 }
 
 resource "aws_security_group" "this" {
@@ -118,9 +126,11 @@ resource "aws_launch_template" "this" {
   key_name               = var.key_name
   instance_type          = var.instance_type
   update_default_version = true
+  # disable_api_stop       = true
+  # disable_api_termination = true
   # In HA mode, load an environment variable with the ENI id so the fck-nat service can disable
   # source destination checking and attach the ENI to the EC2 instance. Include only in HA mode.
-  user_data              = var.ha.enabled ? base64encode(templatefile(local.user_data_template, { eni_id: aws_network_interface.this[0].id })) : null
+  user_data              = var.ha.enabled ? base64encode(templatefile(local.user_data_template, { eni_id: aws_network_interface.this[0].id, asg_name: local.asg_name, asg_hook_name: local.asg_hook_name  })) : null
   tags                   = local.tags
 
   metadata_options {
@@ -154,7 +164,7 @@ resource "aws_launch_template" "this" {
 # ha mode
 resource "aws_autoscaling_group" "this" {
   count                     = var.ha.enabled ? 1 : 0
-  name                      = "${var.name}-asg"
+  name                      = local.asg_name
   min_size                  = 1
   max_size                  = 1
   desired_capacity          = 1
@@ -168,10 +178,33 @@ resource "aws_autoscaling_group" "this" {
     version = "$Latest"
   }
 
+  dynamic "warm_pool" {
+    for_each = var.ha.warm_pool > 0 ? [""] : []
+    content {
+      pool_state                  = "Running"
+      min_size                    = 1
+      max_group_prepared_capacity = var.ha.warm_pool
+
+      instance_reuse_policy {
+        reuse_on_scale_in = false
+      }
+    }
+  }
+
   lifecycle {
     create_before_destroy = true
     ignore_changes        = []
   }
+}
+
+# takes about 1 minute from launch to cloud-init executig the script in user data
+resource "aws_autoscaling_lifecycle_hook" "this" {
+  count                  = var.ha.enabled ? 1 : 0
+  name                   = local.asg_hook_name
+  autoscaling_group_name = aws_autoscaling_group.this[count.index].name
+  default_result         = "CONTINUE"
+  heartbeat_timeout      = 300
+  lifecycle_transition   = "autoscaling:EC2_INSTANCE_LAUNCHING"
 }
 
 # instance mode
