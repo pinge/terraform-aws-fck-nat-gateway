@@ -23,17 +23,22 @@ data "aws_iam_policy_document" "this" {
   statement {
     effect = "Allow"
     actions = [
+      "ec2:ReplaceRoute",
       "ec2:ModifyNetworkInterfaceAttribute",
-      "ec2:AttachNetworkInterface",
-      "ec2:DescribeNetworkInterfaces",
-      "ec2:DescribeNetworkInterfaceAttribute",
       "ec2:DetachNetworkInterface",
+      "ec2:DescribeNetworkInterfaceAttribute",
+      "ec2:DescribeNetworkInterfaces",
+      "ec2:AttachNetworkInterface",
       "autoscaling:DescribeLifecycleHookTypes",
-      "autoscaling:CompleteLifecycleAction",
+      "autoscaling:DescribeAutoScalingGroups",
       "autoscaling:DescribeAutoScalingInstances",
+      "autoscaling:CompleteLifecycleAction",
     ]
     # TODO improve access control to resources by the instance
     #      https://docs.aws.amazon.com/IAM/latest/UserGuide/access_iam-tags.html
+    # filter access by ec2:RouteTableID for ec2:ReplaceRoute, ec2:Vpc and ec2:ResourceTag/${TagKey}
+    # see https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazonec2.html
+    # see https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazonec2.html#amazonec2-policy-keys
     resources = ["*"]
   }
 }
