@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 
 echo "eni_id=${eni_id}" >> /etc/fck-nat.conf
+echo "warm_pool_eni_id=${warm_pool_eni_id}" >> /etc/fck-nat.conf
+echo "route_table_id=${route_table_id}" >> /etc/fck-nat.conf
 echo "asg_name=${asg_name}" >> /etc/fck-nat.conf
 echo "asg_hook_name=${asg_hook_name}" >> /etc/fck-nat.conf
 
@@ -84,16 +86,39 @@ lifecycle_state=$(get_asg_lifecycle_state $instance_id)
 # check for Pending:Wait lifecycle to start reattaching the network interface to this instance
 if [[ "$lifecycle_state" == "Pending:Wait" && ! -f ~/lifecycle.lock ]]; then
     touch ~/lifecycle.lock
-    detach_network_interface $region $eni_id
+    if [[ -n "$warm_pool_eni_id" && -n "$route_table_id" ]]; then
+        aws ec2 replace-route \
+            --route-table-id $route_table_id \
+            --destination-cidr-block "0.0.0.0/0" \
+            --network-interface-id $eni_id
+    else
+        detach_network_interface $eni_id
+    fi
     /sbin/service fck-nat restart
     crontab -r
     complete_lifecycle_action $asg_name $asg_hook_name $instance_id CONTINUE
 fi
 
 # check for Warmed:Pending:Wait lifecycle so the instance can transition to Warmed:Running
-if [[ "$lifecycle_state" == "Warmed:Pending:Wait" && ! -f ~/lifecycle.warmed.lock ]]; then
-    touch ~/lifecycle.warmed.lock
-    complete_lifecycle_action $region $asg_name $asg_hook_name $instance_id CONTINUE
+if [[ "$lifecycle_state" == "Warmed:Pending:Wait" && ! -f ~/lifecycle.warm.lock ]]; then
+    touch ~/lifecycle.warm.lock
+    if [[ -n "$warm_pool_eni_id" && -n "$route_table_id" ]]; then
+        healthy_instance_id=$(get_asg_healthy_instance_id $asg_name)
+        if [[ -n "$healthy_instance_id" ]]; then
+            if instance_has_network_interface_attached $healthy_instance_id $eni_id; then
+                detach_network_interface $warm_pool_eni_id
+                sed -i "s/^eni_id=.*/eni_id=$warm_pool_eni_id/" /etc/fck-nat.conf
+                /sbin/service fck-nat restart
+            else
+                detach_network_interface $eni_id
+                /sbin/service fck-nat restart
+            fi
+        else
+            rm ~/lifecycle.warm.lock
+            exit 0
+        fi
+    fi
+    complete_lifecycle_action $asg_name $asg_hook_name $instance_id CONTINUE
 fi
 
 EOF
