@@ -117,7 +117,16 @@ resource "aws_network_interface" "this" {
   security_groups   = [aws_security_group.this.id]
   # Disable source destination checking for the ENI so it can work as a NAT Gateway
   source_dest_check = false
-  tags              = local.tags
+  tags              = merge(local.tags, { Name = "${var.name}-main" })
+}
+
+resource "aws_network_interface" "warm_pool" {
+  count             = var.ha_warm_pool ? 1 : 0
+  subnet_id         = var.subnet_id
+  security_groups   = [aws_security_group.this.id]
+  # Disable source destination checking for the ENI so it can work as a NAT Gateway
+  source_dest_check = false
+  tags              = merge(local.tags, { Name = "${var.name}-warm" })
 }
 
 resource "aws_launch_template" "this" {
@@ -130,7 +139,14 @@ resource "aws_launch_template" "this" {
   # disable_api_termination = true
   # In HA mode, load an environment variable with the ENI id so the fck-nat service can disable
   # source destination checking and attach the ENI to the EC2 instance. Include only in HA mode.
-  user_data              = var.ha.enabled ? base64encode(templatefile(local.user_data_template, { eni_id: aws_network_interface.this[0].id, asg_name: local.asg_name, asg_hook_name: local.asg_hook_name  })) : null
+  user_data              = var.ha_enabled ? base64encode(templatefile(local.user_data_template,
+    {
+      eni_id: aws_network_interface.this[0].id,
+      warm_pool_eni_id: var.ha_warm_pool ? aws_network_interface.warm_pool[0].id : "",
+      route_table_id: var.ha_warm_pool ? var.ha_route_table_id : "",
+      asg_name: local.asg_name,
+      asg_hook_name: local.asg_hook_name
+    })) : null
   tags                   = local.tags
 
   metadata_options {
