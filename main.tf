@@ -5,10 +5,12 @@ data "aws_ec2_instance_type" "this" {
 data "aws_ami" "this" {
   most_recent = true
   owners      = var.ami_owners
+
   filter {
     name   = "architecture"
     values = data.aws_ec2_instance_type.this.supported_architectures
   }
+
   filter {
     name   = "name"
     values = [var.ami_name_filter]
@@ -20,6 +22,7 @@ data "aws_ami" "this" {
 # see https://github.com/terraform-aws-modules/terraform-aws-eks/issues/1008#issuecomment-691182478
 data "aws_iam_policy_document" "this" {
   count = var.ha_enabled ? 1 : 0
+
   statement {
     effect = "Allow"
     actions = [
