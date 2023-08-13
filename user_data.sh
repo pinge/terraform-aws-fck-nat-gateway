@@ -24,48 +24,62 @@ function get_region {
 
 function get_asg_lifecycle_state {
     echo $(aws autoscaling describe-auto-scaling-instances \
-        --region $1 \
-        --instance-ids $2 \
-    | grep -E -i -o 'LifecycleState": "([A-Za-z:]+)"' \
-    | cut -f 2 -d ' ' \
-    | tr -d '"')
+        --instance-ids $1 \
+        --query "AutoScalingInstances[0].LifecycleState" \
+        --output text)
+}
+
+function get_asg_healthy_instance_id {
+    echo $(aws autoscaling describe-auto-scaling-groups \
+        --auto-scaling-group-names $1 \
+        --query "AutoScalingGroups[].Instances[? (LifecycleState == 'InService') && (HealthStatus == 'Healthy')][].InstanceId | [0]" \
+        --output text)
 }
 
 function complete_lifecycle_action {
     aws autoscaling complete-lifecycle-action \
-        --region $1 \
-        --auto-scaling-group-name $2 \
-        --lifecycle-hook-name $3 \
-        --instance-id $4 \
-        --lifecycle-action-result $5
+        --auto-scaling-group-name $1 \
+        --lifecycle-hook-name $2 \
+        --instance-id $3 \
+        --lifecycle-action-result $4
 }
 
 function get_network_attachment_id {
-    echo $(aws ec2 describe-network-interface-attribute --region $1 --network-interface-id $2 --attribute attachment \
-        | grep -E -i -o 'AttachmentId": "(eni-attach-[a-z0-9]+)"' \
-        | cut -f 2 -d ' ' \
-        | tr -d '"')
+    echo $(aws ec2 describe-network-interface-attribute \
+        --network-interface-id $1 \
+        --attribute attachment \
+        --query "Attachment.AttachmentId" \
+        --output text)
 }
 
 function detach_network_interface {
-    attachment_id=$(get_network_attachment_id $1 $2)
-    if [ -n "$attachment_id" ]; then
+    attachment_id=$(get_network_attachment_id $1)
+    if [ "$attachment_id" != "None" ]; then
         aws ec2 detach-network-interface \
-            --region $1 \
             --attachment-id $attachment_id \
             --force
         # wait until network interface is completely detached
-        while [ -n "$attachment_id" ]; do
-            attachment_id=$(get_network_attachment_id $1 $2)
+        while [ "$attachment_id" != "None" ]; do
+            attachment_id=$(get_network_attachment_id $1)
             sleep 0.5
         done
     fi
 }
 
+function instance_has_network_interface_attached {
+    has=$(aws ec2 describe-network-interface-attribute \
+        --network-interface-id $2 \
+        --attribute attachment \
+        --query "Attachment.InstanceId == '$1'")
+    [ "$has" == "true" ] && return 0 || return 1
+}
+
 token=$(get_token)
 region=$(get_region $token)
+aws configure set region $region
+
 instance_id=$(get_instance_id $token)
-lifecycle_state=$(get_asg_lifecycle_state $region $instance_id)
+lifecycle_state=$(get_asg_lifecycle_state $instance_id)
 
 # check for Pending:Wait lifecycle to start reattaching the network interface to this instance
 if [[ "$lifecycle_state" == "Pending:Wait" && ! -f ~/lifecycle.lock ]]; then
@@ -73,7 +87,7 @@ if [[ "$lifecycle_state" == "Pending:Wait" && ! -f ~/lifecycle.lock ]]; then
     detach_network_interface $region $eni_id
     /sbin/service fck-nat restart
     crontab -r
-    complete_lifecycle_action $region $asg_name $asg_hook_name $instance_id CONTINUE
+    complete_lifecycle_action $asg_name $asg_hook_name $instance_id CONTINUE
 fi
 
 # check for Warmed:Pending:Wait lifecycle so the instance can transition to Warmed:Running
