@@ -4,7 +4,7 @@ data "aws_ec2_instance_type" "this" {
 
 data "aws_ami" "this" {
   most_recent = true
-  owners = var.ami_owners
+  owners      = var.ami_owners
   filter {
     name   = "architecture"
     values = data.aws_ec2_instance_type.this.supported_architectures
@@ -45,8 +45,8 @@ data "aws_iam_policy_document" "this" {
 
 locals {
   user_data_template = "${path.module}/user_data.sh"
-  asg_name = "${var.name}-asg"
-  asg_hook_name = "${var.name}-asg-launch-hook"
+  asg_name           = "${var.name}-asg"
+  asg_hook_name      = "${var.name}-asg-launch-hook"
 }
 
 resource "aws_security_group" "this" {
@@ -74,15 +74,15 @@ resource "aws_security_group_rule" "this_ingress" {
 }
 
 resource "aws_iam_policy" "this" {
-  count       = var.ha_enabled ? 1 : 0
-  name        = "${var.name}-policy"
-  policy      = data.aws_iam_policy_document.this[count.index].json
-  tags        = local.tags
+  count  = var.ha_enabled ? 1 : 0
+  name   = "${var.name}-policy"
+  policy = data.aws_iam_policy_document.this[count.index].json
+  tags   = local.tags
 }
 
 resource "aws_iam_role" "this" {
-  count              = var.ha_enabled ? 1 : 0
-  name               = "${var.name}-role"
+  count = var.ha_enabled ? 1 : 0
+  name  = "${var.name}-role"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = {
@@ -95,7 +95,7 @@ resource "aws_iam_role" "this" {
       }
     }
   })
-  tags               = local.tags
+  tags = local.tags
 }
 
 resource "aws_iam_role_policy_attachment" "this" {
@@ -117,18 +117,18 @@ resource "aws_iam_instance_profile" "this" {
 # with the network_interface_id every time the instances are rotated in the ASG.
 # see https://stackoverflow.com/a/38155727
 resource "aws_network_interface" "this" {
-  count             = var.ha_enabled ? 1 : 0
-  subnet_id         = var.subnet_id
-  security_groups   = [aws_security_group.this.id]
+  count           = var.ha_enabled ? 1 : 0
+  subnet_id       = var.subnet_id
+  security_groups = [aws_security_group.this.id]
   # Disable source destination checking for the ENI so it can work as a NAT Gateway
   source_dest_check = false
   tags              = merge(local.tags, { Name = "${var.name}-main" })
 }
 
 resource "aws_network_interface" "warm_pool" {
-  count             = var.ha_warm_pool ? 1 : 0
-  subnet_id         = var.subnet_id
-  security_groups   = [aws_security_group.this.id]
+  count           = var.ha_warm_pool ? 1 : 0
+  subnet_id       = var.subnet_id
+  security_groups = [aws_security_group.this.id]
   # Disable source destination checking for the ENI so it can work as a NAT Gateway
   source_dest_check = false
   tags              = merge(local.tags, { Name = "${var.name}-warm" })
@@ -144,15 +144,15 @@ resource "aws_launch_template" "this" {
   # disable_api_termination = true
   # In HA mode, load an environment variable with the ENI id so the fck-nat service can disable
   # source destination checking and attach the ENI to the EC2 instance. Include only in HA mode.
-  user_data              = var.ha_enabled ? base64encode(templatefile(local.user_data_template,
+  user_data = var.ha_enabled ? base64encode(templatefile(local.user_data_template,
     {
-      eni_id: aws_network_interface.this[0].id,
-      warm_pool_eni_id: var.ha_warm_pool ? aws_network_interface.warm_pool[0].id : "",
-      route_table_id: var.ha_warm_pool ? var.ha_route_table_id : "",
-      asg_name: local.asg_name,
-      asg_hook_name: local.asg_hook_name
-    })) : null
-  tags                   = local.tags
+      eni_id : aws_network_interface.this[0].id,
+      warm_pool_eni_id : var.ha_warm_pool ? aws_network_interface.warm_pool[0].id : "",
+      route_table_id : var.ha_warm_pool ? var.ha_route_table_id : "",
+      asg_name : local.asg_name,
+      asg_hook_name : local.asg_hook_name
+  })) : null
+  tags = local.tags
 
   metadata_options {
     http_endpoint = "enabled"
@@ -184,11 +184,11 @@ resource "aws_launch_template" "this" {
 
 # ha mode
 resource "aws_autoscaling_group" "this" {
-  count                     = var.ha_enabled ? 1 : 0
-  name                      = local.asg_name
-  min_size                  = 1
-  max_size                  = 1
-  desired_capacity          = 1
+  count            = var.ha_enabled ? 1 : 0
+  name             = local.asg_name
+  min_size         = 1
+  max_size         = 1
+  desired_capacity = 1
   # set the health check grace period to 0 when using a lifecycle hook for instance launch
   health_check_grace_period = var.ha_enabled ? 0 : 60
   default_cooldown          = 15
@@ -196,7 +196,7 @@ resource "aws_autoscaling_group" "this" {
   vpc_zone_identifier       = [var.subnet_id]
 
   launch_template {
-    id = aws_launch_template.this.id
+    id      = aws_launch_template.this.id
     version = "$Latest"
   }
 
@@ -231,8 +231,8 @@ resource "aws_autoscaling_lifecycle_hook" "this" {
 
 # instance mode
 resource "aws_instance" "this" {
-  count             = var.ha_enabled ? 0 : 1
-  subnet_id         = var.subnet_id
+  count     = var.ha_enabled ? 0 : 1
+  subnet_id = var.subnet_id
   # Disable source destination checking for the ENI so it can work as a NAT Gateway
   source_dest_check = false
   key_name          = var.key_name
