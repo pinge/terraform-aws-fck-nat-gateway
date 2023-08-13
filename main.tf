@@ -19,7 +19,7 @@ data "aws_ami" "this" {
 # by assuming a IAM role with permissions to modify the instance's network configuration.
 # see https://github.com/terraform-aws-modules/terraform-aws-eks/issues/1008#issuecomment-691182478
 data "aws_iam_policy_document" "this" {
-  count = var.ha.enabled ? 1 : 0
+  count = var.ha_enabled ? 1 : 0
   statement {
     effect = "Allow"
     actions = [
@@ -69,14 +69,14 @@ resource "aws_security_group_rule" "this_ingress" {
 }
 
 resource "aws_iam_policy" "this" {
-  count       = var.ha.enabled ? 1 : 0
+  count       = var.ha_enabled ? 1 : 0
   name        = "${var.name}-policy"
   policy      = data.aws_iam_policy_document.this[count.index].json
   tags        = local.tags
 }
 
 resource "aws_iam_role" "this" {
-  count              = var.ha.enabled ? 1 : 0
+  count              = var.ha_enabled ? 1 : 0
   name               = "${var.name}-role"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -94,13 +94,13 @@ resource "aws_iam_role" "this" {
 }
 
 resource "aws_iam_role_policy_attachment" "this" {
-  count      = var.ha.enabled ? 1 : 0
+  count      = var.ha_enabled ? 1 : 0
   role       = aws_iam_role.this[count.index].name
   policy_arn = aws_iam_policy.this[count.index].arn
 }
 
 resource "aws_iam_instance_profile" "this" {
-  count = var.ha.enabled ? 1 : 0
+  count = var.ha_enabled ? 1 : 0
   name  = "${var.name}-profile"
   role  = aws_iam_role.this[count.index].name
   tags  = local.tags
@@ -112,7 +112,7 @@ resource "aws_iam_instance_profile" "this" {
 # with the network_interface_id every time the instances are rotated in the ASG.
 # see https://stackoverflow.com/a/38155727
 resource "aws_network_interface" "this" {
-  count             = var.ha.enabled ? 1 : 0
+  count             = var.ha_enabled ? 1 : 0
   subnet_id         = var.subnet_id
   security_groups   = [aws_security_group.this.id]
   # Disable source destination checking for the ENI so it can work as a NAT Gateway
@@ -121,7 +121,7 @@ resource "aws_network_interface" "this" {
 }
 
 resource "aws_launch_template" "this" {
-  name_prefix            = "${var.name}-${var.ha.enabled ? "asg" : "i"}-"
+  name_prefix            = "${var.name}-${var.ha_enabled ? "asg" : "i"}-"
   image_id               = data.aws_ami.this.id
   key_name               = var.key_name
   instance_type          = var.instance_type
@@ -139,7 +139,7 @@ resource "aws_launch_template" "this" {
   }
 
   dynamic "iam_instance_profile" {
-    for_each = var.ha.enabled ? [""] : []
+    for_each = var.ha_enabled ? [""] : []
     content {
       name = "${var.name}-profile"
     }
@@ -163,13 +163,13 @@ resource "aws_launch_template" "this" {
 
 # ha mode
 resource "aws_autoscaling_group" "this" {
-  count                     = var.ha.enabled ? 1 : 0
+  count                     = var.ha_enabled ? 1 : 0
   name                      = local.asg_name
   min_size                  = 1
   max_size                  = 1
   desired_capacity          = 1
   # set the health check grace period to 0 when using a lifecycle hook for instance launch
-  health_check_grace_period = var.ha.enabled ? 0 : 60
+  health_check_grace_period = var.ha_enabled ? 0 : 60
   default_cooldown          = 15
   health_check_type         = "EC2"
   vpc_zone_identifier       = [var.subnet_id]
@@ -180,11 +180,11 @@ resource "aws_autoscaling_group" "this" {
   }
 
   dynamic "warm_pool" {
-    for_each = var.ha.warm_pool > 0 ? [""] : []
+    for_each = var.ha_warm_pool ? [""] : []
     content {
       pool_state                  = "Running"
       min_size                    = 1
-      max_group_prepared_capacity = var.ha.warm_pool
+      max_group_prepared_capacity = 1
 
       instance_reuse_policy {
         reuse_on_scale_in = false
@@ -200,7 +200,7 @@ resource "aws_autoscaling_group" "this" {
 
 # takes about 1 minute from launch to cloud-init executig the script in user data
 resource "aws_autoscaling_lifecycle_hook" "this" {
-  count                  = var.ha.enabled ? 1 : 0
+  count                  = var.ha_enabled ? 1 : 0
   name                   = local.asg_hook_name
   autoscaling_group_name = aws_autoscaling_group.this[count.index].name
   default_result         = "CONTINUE"
@@ -210,7 +210,7 @@ resource "aws_autoscaling_lifecycle_hook" "this" {
 
 # instance mode
 resource "aws_instance" "this" {
-  count             = var.ha.enabled ? 0 : 1
+  count             = var.ha_enabled ? 0 : 1
   subnet_id         = var.subnet_id
   # Disable source destination checking for the ENI so it can work as a NAT Gateway
   source_dest_check = false

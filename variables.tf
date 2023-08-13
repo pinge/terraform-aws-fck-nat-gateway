@@ -3,15 +3,19 @@ variable "name" {
   default = "fck-nat-gateway"
 }
 
-variable "ha" {
-  type = object({
-    enabled = bool
-    warm_pool = number
-  })
-  default = {
-    enabled = true
-    warm_pool = 0
-  }
+variable "ha_enabled" {
+  type    = bool
+  default = true
+}
+
+variable "ha_warm_pool" {
+  type    = bool
+  default = false
+}
+
+variable "ha_route_table_id" {
+  type    = string
+  default = null
 }
 
 variable "instance_type" {
