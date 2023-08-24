@@ -181,7 +181,7 @@ resource "aws_launch_template" "this" {
   }
 
   monitoring {
-    enabled = true
+    enabled = false
   }
 }
 
