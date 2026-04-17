@@ -175,6 +175,10 @@ resource "aws_launch_template" "this" {
     delete_on_termination       = true
   }
 
+  credit_specification {
+    cpu_credits = "standard"
+  }
+
   tag_specifications {
     resource_type = "instance"
     tags          = local.tags
