@@ -231,8 +231,8 @@ resource "aws_autoscaling_lifecycle_hook" "this" {
   count                  = var.ha_enabled ? 1 : 0
   name                   = local.asg_hook_name
   autoscaling_group_name = aws_autoscaling_group.this[count.index].name
-  default_result         = "CONTINUE"
-  heartbeat_timeout      = 300
+  default_result         = "ABANDON"
+  heartbeat_timeout      = 120
   lifecycle_transition   = "autoscaling:EC2_INSTANCE_LAUNCHING"
 }
 
