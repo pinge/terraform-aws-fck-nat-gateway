@@ -48,8 +48,8 @@ data "aws_iam_policy_document" "this" {
 
 locals {
   user_data_template = "${path.module}/user_data.sh"
-  asg_name           = "${var.name}-asg"
-  asg_hook_name      = "${var.name}-asg-launch-hook"
+  asg_name           = "${var.name}"
+  asg_hook_name      = "${var.name}-launching-hook"
 }
 
 resource "aws_security_group" "this" {
@@ -78,14 +78,14 @@ resource "aws_security_group_rule" "this_ingress" {
 
 resource "aws_iam_policy" "this" {
   count  = var.ha_enabled ? 1 : 0
-  name   = "${var.name}-policy"
+  name   = var.name
   policy = data.aws_iam_policy_document.this[count.index].json
   tags   = local.tags
 }
 
 resource "aws_iam_role" "this" {
   count = var.ha_enabled ? 1 : 0
-  name  = "${var.name}-role"
+  name  = var.name
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = {
@@ -109,7 +109,7 @@ resource "aws_iam_role_policy_attachment" "this" {
 
 resource "aws_iam_instance_profile" "this" {
   count = var.ha_enabled ? 1 : 0
-  name  = "${var.name}-profile"
+  name  = var.name
   role  = aws_iam_role.this[count.index].name
   tags  = local.tags
 }
@@ -138,7 +138,7 @@ resource "aws_network_interface" "warm_pool" {
 }
 
 resource "aws_launch_template" "this" {
-  name_prefix            = "${var.name}-${var.ha_enabled ? "asg" : "i"}-"
+  name                   = "${var.name}${var.ha_enabled ? "-ha" : ""}"
   image_id               = data.aws_ami.this.id
   key_name               = var.key_name
   instance_type          = var.instance_type
@@ -165,7 +165,7 @@ resource "aws_launch_template" "this" {
   dynamic "iam_instance_profile" {
     for_each = var.ha_enabled ? [""] : []
     content {
-      name = "${var.name}-profile"
+      name = var.name
     }
   }
 
@@ -207,6 +207,18 @@ resource "aws_autoscaling_group" "this" {
     version = "$Latest"
   }
 
+  # launching hook declared as initial_lifecycle_hook so it is created atomically
+  # with the asg, avoiding instances launching without a hook when the asg is created
+  dynamic "initial_lifecycle_hook" {
+    for_each = var.ha_enabled ? [""] : []
+    content {
+      name                   = local.asg_hook_name
+      default_result         = "ABANDON"
+      heartbeat_timeout      = 120
+      lifecycle_transition   = "autoscaling:EC2_INSTANCE_LAUNCHING"
+    }
+  }
+
   dynamic "warm_pool" {
     for_each = var.ha_warm_pool ? [""] : []
     content {
@@ -224,16 +236,6 @@ resource "aws_autoscaling_group" "this" {
     create_before_destroy = true
     ignore_changes        = []
   }
-}
-
-# takes about 1 minute from launch to cloud-init executig the script in user data
-resource "aws_autoscaling_lifecycle_hook" "this" {
-  count                  = var.ha_enabled ? 1 : 0
-  name                   = local.asg_hook_name
-  autoscaling_group_name = aws_autoscaling_group.this[count.index].name
-  default_result         = "ABANDON"
-  heartbeat_timeout      = 120
-  lifecycle_transition   = "autoscaling:EC2_INSTANCE_LAUNCHING"
 }
 
 # instance mode
