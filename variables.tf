@@ -1,6 +1,6 @@
 variable "name" {
   type    = string
-  default = "fck-nat-gateway"
+  default = "cheap-nat-gateway"
 }
 
 variable "ha_enabled" {
@@ -25,7 +25,7 @@ variable "instance_type" {
 
 variable "ami_owners" {
   type    = list(string)
-  default = ["568608671756"]
+  default = ["self"]
 }
 
 variable "ami_name_filter" {
