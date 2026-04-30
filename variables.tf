@@ -30,7 +30,7 @@ variable "ami_owners" {
 
 variable "ami_name_filter" {
   type    = string
-  default = "fck-nat-amzn2-*"
+  default = "cheap-nat-al2023-hvm-*"
 }
 
 variable "key_name" {
